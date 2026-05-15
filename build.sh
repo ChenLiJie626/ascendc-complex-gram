@@ -1,58 +1,80 @@
-#!/usr/bin/env bash
-set -euo pipefail
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "${SCRIPT_DIR}"
-
-log() { echo "[ComplexGram build] $*"; }
-fail() { echo "[ComplexGram build][ERROR] $*" >&2; exit 1; }
-
-log "project root: ${SCRIPT_DIR}"
-
-resolve_install_path() {
-    if [[ -n "${ASCEND_HOME_PATH:-}" ]]; then echo "${ASCEND_HOME_PATH}";
-    elif [[ -n "${ASCEND_HOME:-}" ]]; then echo "${ASCEND_HOME}";
-    elif [[ -d "${HOME}/Ascend/ascend-toolkit/latest" ]]; then echo "${HOME}/Ascend/ascend-toolkit/latest";
-    else echo "/usr/local/Ascend/ascend-toolkit/latest"; fi
-}
-
-export ASCEND_HOME_PATH="$(resolve_install_path)"
-log "ASCEND_HOME_PATH=${ASCEND_HOME_PATH}"
-
-if [[ -f "${ASCEND_HOME_PATH}/bin/setenv.bash" ]]; then
-  # shellcheck source=/dev/null
-  source "${ASCEND_HOME_PATH}/bin/setenv.bash"
-elif [[ -f "${ASCEND_HOME_PATH}/set_env.sh" ]]; then
-  # shellcheck source=/dev/null
-  source "${ASCEND_HOME_PATH}/set_env.sh"
+#!/bin/bash
+set -e
+if [ -z "$BASE_LIBS_PATH" ]; then
+  if [ -z "$ASCEND_HOME_PATH" ]; then
+    if [ -z "$ASCEND_AICPU_PATH" ]; then
+      echo "please set env. Example: export ASCEND_HOME_PATH=/usr/local/Ascend/ascend-toolkit/latest"
+      exit 1
+    else
+      export ASCEND_HOME_PATH=$ASCEND_AICPU_PATH
+    fi
+  else
+    export ASCEND_HOME_PATH=$ASCEND_HOME_PATH
+  fi
 else
-  fail "cannot find Ascend environment. Set ASCEND_HOME_PATH, for example:
-  export ASCEND_HOME_PATH=/usr/local/Ascend/ascend-toolkit/latest
-  source \${ASCEND_HOME_PATH}/bin/setenv.bash
-Then run from the project directory:
-  cd ${SCRIPT_DIR}
-  bash build.sh"
+  export ASCEND_HOME_PATH=$BASE_LIBS_PATH
 fi
 
-log "checking tools..."
-command -v cmake >/dev/null 2>&1 || fail "cmake not found"
-if ! command -v msopgen >/dev/null 2>&1; then
-  fail "msopgen not found in PATH after sourcing CANN environment.
-This script must be run on an Ascend/CANN environment with msopgen installed.
-For local non-NPU checks, use:
-  bash scripts/run_local_checks.sh"
+echo "using ASCEND_HOME_PATH: $ASCEND_HOME_PATH"
+script_path=$(realpath $(dirname $0))
+echo "using project path: $script_path"
+
+BUILD_DIR="build_out"
+HOST_NATIVE_DIR="host_native_tiling"
+mkdir -p build_out
+rm -rf build_out/*
+
+opts=$(python3 $script_path/cmake/util/preset_parse.py $script_path/CMakePresets.json)
+# Make the generated project robust when CMakePresets.json was copied between machines.
+opts="$opts -DASCEND_CANN_PACKAGE_PATH=$ASCEND_HOME_PATH"
+ENABLE_CROSS="-DENABLE_CROSS_COMPILE=True"
+ENABLE_BINARY="-DENABLE_BINARY_PACKAGE=True"
+ENABLE_LIBRARY="-DASCEND_PACK_SHARED_LIBRARY=True"
+cmake_version=$(cmake --version | grep "cmake version" | awk '{print $3}')
+
+target=package
+if [ "$1"x != ""x ]; then target=$1; fi
+if [[ $opts =~ $ENABLE_LIBRARY ]]; then target=install; fi
+
+echo "cmake opts: $opts"
+echo "target: $target"
+
+if [[ $opts =~ $ENABLE_CROSS ]] && [[ $opts =~ $ENABLE_BINARY ]]
+then
+  if [ "$cmake_version" \< "3.19.0" ] ; then
+    cmake -S . -B "$BUILD_DIR" $opts -DENABLE_CROSS_COMPILE=0
+  else
+    cmake -S . -B "$BUILD_DIR" --preset=default -DENABLE_CROSS_COMPILE=0 -DASCEND_CANN_PACKAGE_PATH=$ASCEND_HOME_PATH
+  fi
+  cmake --build "$BUILD_DIR" --target cust_optiling
+  mkdir $BUILD_DIR/$HOST_NATIVE_DIR
+  cp $(find $BUILD_DIR -name "libcust_opmaster_rt2.0.so") $BUILD_DIR/$HOST_NATIVE_DIR
+  cp -r $BUILD_DIR/$HOST_NATIVE_DIR .
+  rm -rf $BUILD_DIR/*
+  mv $HOST_NATIVE_DIR $BUILD_DIR
+  host_native_tiling_lib=$(realpath $(find $BUILD_DIR -type f -name "libcust_opmaster_rt2.0.so"))
+  if [ "$cmake_version" \< "3.19.0" ] ; then
+    cmake -S . -B "$BUILD_DIR" $opts -DHOST_NATIVE_TILING_LIB=$host_native_tiling_lib
+  else
+    cmake -S . -B "$BUILD_DIR" --preset=default -DHOST_NATIVE_TILING_LIB=$host_native_tiling_lib -DASCEND_CANN_PACKAGE_PATH=$ASCEND_HOME_PATH
+  fi
+  cmake --build "$BUILD_DIR" --target binary -j$(nproc)
+  cmake --build "$BUILD_DIR" --target $target -j$(nproc)
+else
+  if [ "$cmake_version" \< "3.19.0" ] ; then
+    cmake -S . -B "$BUILD_DIR" $opts
+  else
+      cmake -S . -B "$BUILD_DIR" --preset=default -DASCEND_CANN_PACKAGE_PATH=$ASCEND_HOME_PATH
+  fi
+  cmake --build "$BUILD_DIR" --target binary -j$(nproc)
+  cmake --build "$BUILD_DIR" --target $target -j$(nproc)
 fi
 
-log "msopgen: $(command -v msopgen)"
-log "cleaning old build output"
-rm -rf build build_out
+echo "build finished. packages:"
+find "$BUILD_DIR" -maxdepth 1 -name "custom_opp_*.run" -print
 
-log "running: msopgen compile -i ${SCRIPT_DIR} -c ${ASCEND_HOME_PATH}"
-msopgen compile -i "${SCRIPT_DIR}" -c "${ASCEND_HOME_PATH}"
-
-if ! find ./build_out -maxdepth 1 -name "custom_opp_*.run" | grep -q .; then
-  fail "msopgen finished but no build_out/custom_opp_*.run was generated. Check the compile log above."
-fi
-
-log "build packages:"
-find ./build_out -maxdepth 1 -name "custom_opp_*.run" -print
-log "done"
+# for debug
+# cd build_out
+# make
+# cpack
+# verbose append -v
