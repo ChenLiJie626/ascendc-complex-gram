@@ -1,0 +1,6 @@
+build_host/
+__pycache__/
+*.npy
+*.bin
+output/
+data/
