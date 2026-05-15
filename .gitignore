@@ -1,6 +1,12 @@
-build_host/
-__pycache__/
-*.npy
-*.bin
+build*/
+out/
 output/
 data/
+__pycache__/
+*.pyc
+*.npy
+*.bin
+*.o
+*.so
+*.run
+.DS_Store
