@@ -40,9 +40,9 @@ using AType = half;
 using BType = half;
 using CType = float;
 using BiasType = float;
-using Mm = Matmul<MatmulType<TPosition::GM, CubeFormat::ND, AType, true, LayoutMode::NORMAL>,
-                  MatmulType<TPosition::GM, CubeFormat::ND, BType, false, LayoutMode::NORMAL>,
-                  MatmulType<TPosition::GM, CubeFormat::ND, CType, false, LayoutMode::NORMAL>,
+using Mm = Matmul<MatmulType<TPosition::GM, CubeFormat::ND, AType, true>,
+                  MatmulType<TPosition::GM, CubeFormat::ND, BType, false>,
+                  MatmulType<TPosition::GM, CubeFormat::ND, CType>,
                   MatmulType<TPosition::GM, CubeFormat::ND, BiasType>>;
 
 __aicore__ inline uint32_t MinU32(uint32_t lhs, uint32_t rhs)
