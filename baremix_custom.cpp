@@ -40,9 +40,9 @@ using AType = half;
 using BType = half;
 using CType = float;
 using BiasType = float;
-using Mm = Matmul<MatmulType<TPosition::GM, CubeFormat::ND, AType, true>,
-                  MatmulType<TPosition::GM, CubeFormat::ND, BType, false>,
-                  MatmulType<TPosition::GM, CubeFormat::ND, CType>,
+using Mm = Matmul<MatmulType<TPosition::GM, CubeFormat::ND, AType, true, LayoutMode::NORMAL>,
+                  MatmulType<TPosition::GM, CubeFormat::ND, BType, false, LayoutMode::NORMAL>,
+                  MatmulType<TPosition::GM, CubeFormat::ND, CType, false, LayoutMode::NORMAL>,
                   MatmulType<TPosition::GM, CubeFormat::ND, BiasType>>;
 
 __aicore__ inline uint32_t MinU32(uint32_t lhs, uint32_t rhs)
@@ -235,18 +235,16 @@ public:
             const uint16_t readyFlag = FLAG_CUBE_DONE_BASE + (g & 1);
             const uint16_t doneFlag = FLAG_VEC_DONE_BASE + (g & 1);
             CrossCoreWaitFlag(readyFlag);
-            for (uint32_t inner = 0; inner < complex_gram_fused::AVG_NUM; ++inner) {
-                ProcessSlice(g, inner);
-            }
+            ProcessGroup(g);
+            PipeBarrier<PIPE_ALL>();
             CrossCoreSetFlag<0x2, PIPE_MTE3>(doneFlag);
         }
     }
 
 private:
-    __aicore__ inline void ProcessSlice(uint32_t g, uint32_t inner)
+    __aicore__ inline void ProcessGroup(uint32_t g)
     {
         const uint64_t matrixElems = static_cast<uint64_t>(params_.u) * params_.u;
-        const uint64_t tmpBase = static_cast<uint64_t>(inner) * matrixElems;
         const uint64_t groupBase = static_cast<uint64_t>(g) * matrixElems;
         LocalTensor<float> rr = calcBuf_.GetWithOffset<float>(VEC_CHUNK, 0);
         LocalTensor<float> ii = calcBuf_.GetWithOffset<float>(VEC_CHUNK, VEC_CHUNK * sizeof(float));
@@ -265,55 +263,51 @@ private:
                 const uint64_t offset = static_cast<uint64_t>(row) * params_.u + col;
                 const uint64_t outOffset = groupBase + offset;
 
-                DataCopy(rr, tmpRR_[tmpBase + offset], count);
-                DataCopy(ii, tmpII_[tmpBase + offset], count);
-                DataCopy(ri, tmpRI_[tmpBase + offset], count);
-                DataCopy(ir, tmpIR_[tmpBase + offset], count);
-                if (inner != 0) {
-                    DataCopy(bLocal, b_[outOffset], count);
-                    DataCopy(prLocal, bPlur_[outOffset], count);
-                    DataCopy(piLocal, bPlui_[outOffset], count);
-                }
-                if (inner == complex_gram_fused::AVG_NUM - 1 && g != 0) {
+                Duplicate(bLocal, 0.0f, count);
+                Duplicate(prLocal, 0.0f, count);
+                Duplicate(piLocal, 0.0f, count);
+                if (g != 0) {
                     DataCopy(sumLocal, bsum_[offset], count);
+                } else {
+                    Duplicate(sumLocal, 0.0f, count);
                 }
                 PipeBarrier<PIPE_ALL>();
 
-                Add(rr, rr, ii, count);
-                Sub(ri, ri, ir, count);
-                Mul(ii, rr, rr, count);
-                Mul(ir, ri, ri, count);
-                Add(ii, ii, ir, count);
-                Muls(ii, ii, INV_AVG_NUM, count);
+                for (uint32_t inner = 0; inner < complex_gram_fused::AVG_NUM; ++inner) {
+                    const uint64_t tmpBase = static_cast<uint64_t>(inner) * matrixElems;
+                    DataCopy(rr, tmpRR_[tmpBase + offset], count);
+                    DataCopy(ii, tmpII_[tmpBase + offset], count);
+                    DataCopy(ri, tmpRI_[tmpBase + offset], count);
+                    DataCopy(ir, tmpIR_[tmpBase + offset], count);
+                    PipeBarrier<PIPE_ALL>();
 
-                if (inner == 0) {
-                    Duplicate(bLocal, 0.0f, count);
-                    Duplicate(prLocal, 0.0f, count);
-                    Duplicate(piLocal, 0.0f, count);
+                    Add(rr, rr, ii, count);
+                    Sub(ri, ri, ir, count);
+                    Mul(ii, rr, rr, count);
+                    Mul(ir, ri, ri, count);
+                    Add(ii, ii, ir, count);
+
+                    Add(bLocal, bLocal, ii, count);
+                    Add(prLocal, prLocal, rr, count);
+                    ApplyTriangleConjugate(row, col, count, ri);
+                    Add(piLocal, piLocal, ri, count);
+                    PipeBarrier<PIPE_V>();
                 }
 
-                Add(bLocal, bLocal, ii, count);
-                Muls(rr, rr, INV_AVG_NUM, count);
-                ApplyTriangleConjugate(row, col, count, ri);
-                Muls(ri, ri, INV_AVG_NUM, count);
-                Add(prLocal, prLocal, rr, count);
-                Add(piLocal, piLocal, ri, count);
+                Muls(bLocal, bLocal, INV_AVG_NUM, count);
+                Muls(prLocal, prLocal, INV_AVG_NUM, count);
+                Muls(piLocal, piLocal, INV_AVG_NUM, count);
                 PipeBarrier<PIPE_V>();
 
                 DataCopy(b_[outOffset], bLocal, count);
                 DataCopy(bPlur_[outOffset], prLocal, count);
                 DataCopy(bPlui_[outOffset], piLocal, count);
 
-                if (inner == complex_gram_fused::AVG_NUM - 1) {
-                    if (g == 0) {
-                        Duplicate(sumLocal, 0.0f, count);
-                    }
-                    Muls(ii, bLocal, INV_GROUP_NUM, count);
-                    Add(sumLocal, sumLocal, ii, count);
-                    PipeBarrier<PIPE_V>();
-                    DataCopy(bsum_[offset], sumLocal, count);
-                    UpdateCsum(g, row, col, count, bLocal);
-                }
+                Muls(ii, bLocal, INV_GROUP_NUM, count);
+                Add(sumLocal, sumLocal, ii, count);
+                PipeBarrier<PIPE_V>();
+                DataCopy(bsum_[offset], sumLocal, count);
+                UpdateCsum(g, row, col, count, bLocal);
 
                 col += count;
             }

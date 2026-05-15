@@ -48,6 +48,8 @@ Bsum  += B / 17
 Csum  += B[::8, ::8] / 17
 ```
 
+AIV 不再把每个 inner 的部分和写回 GM 后再读出继续累加；现在每个 row/col chunk 在 UB 中累加完 16 个 inner，再一次性写出 `B/BPlur/BPlui`，避免 MTE3 写回和下一轮 MTE2 读入之间的数据相关冒险。
+
 AIC 每个 group 只发送一次 ready flag。AIV 等 ready 后处理该 group 的 16 个 inner，完成后两个 AIV sub block 对同一个 done flag 调用 `CrossCoreSetFlag<0x2, ...>`；mode 2 会在两个 AIV 都 set 后放行 AIC，AIC 再复用临时 workspace。ready/done flag 按 group 奇偶交替使用，避免同一 flagId 高频设置。
 
 `baremix_custom_tiling.cpp` 不固定 `16x16` 分块，而是让 `MultiCoreMatmulTiling` 根据 `8n * 8n` 输出规模生成能覆盖全矩阵的 `singleCoreM/singleCoreN`，并使用 `tilingData.usedCoreNum` 作为 launch 的 `blockDim`。
