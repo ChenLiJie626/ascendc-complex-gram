@@ -1,69 +1,68 @@
-# complex_gram_fused AscendC kernel
-
-This workspace contains an AscendC MIX AIC/AIV fused kernel for:
-
-```text
-Ar, Ai: half [272, 256, 8n]
-B:      float [17, 8n, 8n]
-BPlur:  float [17, 8n, 8n]
-BPlui:  float [17, 8n, 8n]
-Bsum:   float [8n, 8n]
-Csum:   float [n, n]
+## 目录结构介绍
+```
+├── BareMixInvocation              // 通过AIC/AIV MIX方式实现复数Gram矩阵融合算子
+│   ├── cmake                      // 编译工程文件
+│   ├── scripts
+│   │   ├── gen_data.py            // 输入数据和真值数据生成脚本
+│   │   ├── verify_data.py         // 验证输出数据和真值数据是否一致
+│   │   └── verify_result.py       // 与官方样例命名兼容的验证入口
+│   ├── CMakeLists.txt             // 编译工程文件
+│   ├── data_utils.h               // 数据读入写出函数
+│   ├── main.cpp                   // 主函数，调用算子的应用程序，含CPU域及NPU域调用
+│   ├── baremix_custom_tiling.cpp  // 算子tiling实现
+│   ├── baremix_custom.cpp         // 算子kernel实现
+│   └── run.sh                     // 编译运行算子的脚本
 ```
 
-For each `g in [0, 17)` and `inner in [0, 16)`, the AIC side computes four real GEMMs with Cube Matmul:
+## 算子规格描述
+输入：
+- `Ar`: `float16 [272, 256, 8n]`
+- `Ai`: `float16 [272, 256, 8n]`
 
-```text
+输出：
+- `B`: `float32 [17, 8n, 8n]`
+- `BPlur`: `float32 [17, 8n, 8n]`
+- `BPlui`: `float32 [17, 8n, 8n]`
+- `Bsum`: `float32 [8n, 8n]`
+- `Csum`: `float32 [n, n]`
+
+核函数名：`baremix_custom`
+
+## 代码实现介绍
+`baremix_custom.cpp` 使用 `KERNEL_TYPE_MIX_AIC_1_2` 启用 AIC/AIV 混合核。AIC 侧调用 Matmul 高阶 API 做四个实矩阵乘：
+```
 RR = Ar^T * Ar
 II = Ai^T * Ai
 RI = Ar^T * Ai
 IR = Ai^T * Ar
+```
 
+AIV 侧通过 `CrossCoreWaitFlag` 等待 AIC 完成，再计算：
+```
 real = RR + II
 imag = RI - IR
-B     += real^2 + imag^2
-BPlur += real
-BPlui += imag for upper triangle, -imag for lower triangle
+B     += (real * real + imag * imag) / 16
+BPlur += real / 16
+BPlui += imag / 16，上三角保留原值，下三角取共轭
+Bsum  += B / 17
+Csum  += B[::8, ::8] / 17
 ```
 
-The AIV side waits for the AIC side with `CrossCoreWaitFlag`, performs the norm / triangular conjugate / reductions, then signals the AIC side with `CrossCoreSetFlag` so the temporary GEMM workspace can be reused.
+AIV 完成当前切片后用 `CrossCoreSetFlag` 通知 AIC，AIC 等两个 AIV sub block 都完成后才复用临时 workspace。
 
-## Files
-
-```text
-include/complex_gram_fused_tiling.h
-src/complex_gram_fused_kernel.cpp
-src/complex_gram_fused_tiling.cpp
+## 运行样例算子
+```bash
+bash run.sh -r npu -v Ascend910B1 -n 1
 ```
 
-## Kernel Arguments
+参数：
+- `-r, --run-mode`: `cpu / sim / npu`
+- `-v, --soc-version`: `Ascend910B1 / Ascend910B2 / Ascend910B3 / Ascend910B4`
+- `-n, --user-num`: 用户数 `n`
 
-```cpp
-extern "C" __global__ __aicore__ void complex_gram_fused(
-    GM_ADDR ar,
-    GM_ADDR ai,
-    GM_ADDR b,
-    GM_ADDR bPlur,
-    GM_ADDR bPlui,
-    GM_ADDR bsum,
-    GM_ADDR csum,
-    GM_ADDR workspace,
-    GM_ADDR tilingGm);
-```
-
-Use `GenerateTiling(...)` from `src/complex_gram_fused_tiling.cpp` to create `tilingGm`, get `actualBlockDim`, and get the required `workspaceSize`.
-
-The workspace layout is:
-
-```text
-[ Matmul system workspace ][ tmpRR ][ tmpII ][ tmpRI ][ tmpIR ]
-```
-
-where each temporary matrix has `8n * 8n * sizeof(float)` bytes.
-
-## Notes
-
-- The kernel is written for `half` inputs and `float` outputs. If `Ar/Ai` are stored as `float`, convert them to `half` before launch or switch the Cube path to a supported dtype on your target.
-- The kernel uses CrossCore flag IDs `8` and `9`. If your CANN version or surrounding fused code already reserves these IDs, change `FLAG_CUBE_DONE` and `FLAG_VEC_DONE` in `src/complex_gram_fused_kernel.cpp`.
-- This is a direct-kernel style implementation. For framework-launch custom ops, keep the same kernel body and move `GenerateTiling` into the op-host tiling function.
-- The current workspace does not include a local CANN/AscendC toolkit, so compile validation must be done on an Ascend development environment.
+输出文件位于 `output/`，验证脚本会对比：
+- `b.bin` vs `golden_b.bin`
+- `bplur.bin` vs `golden_bplur.bin`
+- `bplui.bin` vs `golden_bplui.bin`
+- `bsum.bin` vs `golden_bsum.bin`
+- `csum.bin` vs `golden_csum.bin`

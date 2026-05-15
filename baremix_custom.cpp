@@ -1,16 +1,36 @@
+/**
+ * @file baremix_custom.cpp
+ */
 #define ASCENDC_CUBE_ONLY
 
 #include "kernel_operator.h"
 #include "lib/matmul_intf.h"
-#include "complex_gram_fused_tiling.h"
 
 using namespace AscendC;
 using namespace matmul;
 
+namespace complex_gram_fused {
+constexpr uint32_t GROUP_NUM = 17;
+constexpr uint32_t AVG_NUM = 16;
+constexpr uint32_t K_DIM = 256;
+constexpr uint32_t USER_VEC = 8;
+constexpr uint32_t AIV_PER_AIC = 2;
+
+struct Params {
+    uint32_t n;
+    uint32_t u;
+    uint32_t k;
+    uint32_t blockDim;
+    uint32_t sysWorkspaceSize;
+    uint32_t reserved;
+    uint64_t userWorkspaceSize;
+};
+}  // namespace complex_gram_fused
+
 namespace {
 
 constexpr uint16_t FLAG_CUBE_DONE = 8;
-constexpr uint16_t FLAG_VEC_DONE = 9;
+constexpr uint16_t FLAG_VEC_DONE_BASE = 9;
 constexpr uint32_t VEC_CHUNK = 256;
 constexpr float INV_AVG_NUM = 1.0f / static_cast<float>(complex_gram_fused::AVG_NUM);
 constexpr float INV_GROUP_NUM = 1.0f / static_cast<float>(complex_gram_fused::GROUP_NUM);
@@ -44,12 +64,12 @@ __aicore__ inline void CopyCubeTiling(TCubeTiling *tiling, GM_ADDR tilingGm)
     }
 }
 
-__aicore__ inline void CopyParams(complex_gram_fused::ComplexGramFusedParams *params, GM_ADDR tilingGm)
+__aicore__ inline void CopyParams(complex_gram_fused::Params *params, GM_ADDR tilingGm)
 {
     constexpr uint64_t paramOffset = ((sizeof(TCubeTiling) + 31) / 32) * 32;
     auto src = reinterpret_cast<__gm__ uint32_t *>(reinterpret_cast<__gm__ uint8_t *>(tilingGm) + paramOffset);
     auto dst = reinterpret_cast<uint32_t *>(params);
-    constexpr uint32_t words = sizeof(complex_gram_fused::ComplexGramFusedParams) / sizeof(uint32_t);
+    constexpr uint32_t words = sizeof(complex_gram_fused::Params) / sizeof(uint32_t);
     for (uint32_t i = 0; i < words; ++i) {
         dst[i] = src[i];
     }
@@ -91,7 +111,7 @@ __aicore__ inline TileInfo CalcTileInfo(uint32_t blockIdx, const TCubeTiling &ti
 class ComplexGramCubeKernel {
 public:
     __aicore__ inline void Init(GM_ADDR ar, GM_ADDR ai, GM_ADDR workspace, const TCubeTiling &tiling,
-                                const complex_gram_fused::ComplexGramFusedParams &params, TPipe *pipe)
+                                const complex_gram_fused::Params &params, TPipe *pipe)
     {
         ar_ = reinterpret_cast<__gm__ AType *>(ar);
         ai_ = reinterpret_cast<__gm__ AType *>(ai);
@@ -114,7 +134,7 @@ public:
             return;
         }
 
-        REGIST_MATMUL_OBJ(pipe_, GetSysWorkSpacePtr(), mm_, &tiling_);
+        REGIST_MATMUL_OBJ(pipe_, GetSysWorkSpacePtr(), mm_);
         for (uint32_t g = 0; g < complex_gram_fused::GROUP_NUM; ++g) {
             for (uint32_t inner = 0; inner < complex_gram_fused::AVG_NUM; ++inner) {
                 const uint64_t slice = (static_cast<uint64_t>(g) * complex_gram_fused::AVG_NUM + inner) *
@@ -125,7 +145,8 @@ public:
                 RunMatmul(ai_ + slice, ar_ + slice, tmpIR_);
 
                 CrossCoreSetFlag<0x2, PIPE_FIX>(FLAG_CUBE_DONE);
-                CrossCoreWaitFlag(FLAG_VEC_DONE);
+                CrossCoreWaitFlag(FLAG_VEC_DONE_BASE);
+                CrossCoreWaitFlag(FLAG_VEC_DONE_BASE + 1);
             }
         }
     }
@@ -149,7 +170,7 @@ private:
     __gm__ AType *ar_;
     __gm__ AType *ai_;
     TCubeTiling tiling_;
-    complex_gram_fused::ComplexGramFusedParams params_;
+    complex_gram_fused::Params params_;
     TileInfo tile_;
     TPipe *pipe_;
     Mm mm_;
@@ -163,7 +184,7 @@ class ComplexGramVectorKernel {
 public:
     __aicore__ inline void Init(GM_ADDR b, GM_ADDR bPlur, GM_ADDR bPlui, GM_ADDR bsum, GM_ADDR csum,
                                 GM_ADDR workspace, const TCubeTiling &tiling,
-                                const complex_gram_fused::ComplexGramFusedParams &params, TPipe *pipe)
+                                const complex_gram_fused::Params &params, TPipe *pipe)
     {
         tiling_ = tiling;
         params_ = params;
@@ -196,12 +217,13 @@ public:
         const uint32_t rowsPerSub = CeilDiv(tile_.rowLen, complex_gram_fused::AIV_PER_AIC);
         rowBegin_ = tile_.rowStart + subIdx * rowsPerSub;
         rowEnd_ = MinU32(tile_.rowStart + tile_.rowLen, rowBegin_ + rowsPerSub);
+        doneFlag_ = FLAG_VEC_DONE_BASE + subIdx;
 
         for (uint32_t g = 0; g < complex_gram_fused::GROUP_NUM; ++g) {
             for (uint32_t inner = 0; inner < complex_gram_fused::AVG_NUM; ++inner) {
                 CrossCoreWaitFlag(FLAG_CUBE_DONE);
                 ProcessSlice(g, inner);
-                CrossCoreSetFlag<0x2, PIPE_MTE3>(FLAG_VEC_DONE);
+                CrossCoreSetFlag<0x2, PIPE_MTE3>(doneFlag_);
             }
         }
     }
@@ -329,10 +351,11 @@ private:
     }
 
     TCubeTiling tiling_;
-    complex_gram_fused::ComplexGramFusedParams params_;
+    complex_gram_fused::Params params_;
     TileInfo tile_;
     uint32_t rowBegin_;
     uint32_t rowEnd_;
+    uint32_t doneFlag_;
     TPipe *pipe_;
     TBuf<TPosition::VECCALC> calcBuf_;
     GlobalTensor<float> tmpRR_;
@@ -348,22 +371,17 @@ private:
 
 }  // namespace
 
-extern "C" __global__ __aicore__ void complex_gram_fused(GM_ADDR ar, GM_ADDR ai, GM_ADDR b, GM_ADDR bPlur,
-                                                         GM_ADDR bPlui, GM_ADDR bsum, GM_ADDR csum,
-                                                         GM_ADDR workspace, GM_ADDR tilingGm)
+extern "C" __global__ __aicore__ void baremix_custom(GM_ADDR ar, GM_ADDR ai, GM_ADDR b, GM_ADDR bPlur,
+                                                     GM_ADDR bPlui, GM_ADDR bsum, GM_ADDR csum,
+                                                     GM_ADDR workspace, GM_ADDR tilingGm)
 {
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
 
     TPipe pipe;
     TCubeTiling cubeTiling;
-    complex_gram_fused::ComplexGramFusedParams params;
+    complex_gram_fused::Params params;
     CopyCubeTiling(&cubeTiling, tilingGm);
     CopyParams(&params, tilingGm);
-
-    SetSysWorkspace(workspace);
-    if (GetSysWorkSpacePtr() == nullptr) {
-        return;
-    }
 
     if ASCEND_IS_AIC {
         ComplexGramCubeKernel op;
