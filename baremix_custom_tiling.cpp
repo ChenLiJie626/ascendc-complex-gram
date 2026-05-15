@@ -69,10 +69,10 @@ void GenerateTiling(const char *socVersion, uint32_t n, uint8_t *tilingBuf, size
     }
 
     const uint32_t u = n * complex_gram_fused::USER_VEC;
-    const uint32_t mBlocks = complex_gram_fused::CeilDiv(u, 16);
-    const uint32_t nBlocks = complex_gram_fused::CeilDiv(u, 16);
+    const uint32_t mBlocksAtMinTile = complex_gram_fused::CeilDiv(u, 16);
+    const uint32_t nBlocksAtMinTile = complex_gram_fused::CeilDiv(u, 16);
     const uint32_t maxAic = ascendcPlatform->GetCoreNumAic();
-    blockDim = mBlocks * nBlocks;
+    blockDim = mBlocksAtMinTile * nBlocksAtMinTile;
     if (blockDim == 0) {
         blockDim = 1;
     }
@@ -90,7 +90,6 @@ void GenerateTiling(const char *socVersion, uint32_t n, uint8_t *tilingBuf, size
     tilingApi.SetShape(u, u, complex_gram_fused::K_DIM);
     tilingApi.SetBias(false);
     tilingApi.SetTraverse(MatrixTraverse::FIRSTM);
-    tilingApi.SetFixSplit(16, 16, -1);
     tilingApi.SetBufferSpace(-1, -1, -1);
 
     int64_t res = tilingApi.GetTiling(tilingData);
@@ -100,6 +99,7 @@ void GenerateTiling(const char *socVersion, uint32_t n, uint8_t *tilingBuf, size
         std::cout << "gen tiling failed" << std::endl;
         return;
     }
+    blockDim = tilingData.usedCoreNum;
 
     const size_t systemWorkspaceSize = static_cast<size_t>(ascendcPlatform->GetLibApiWorkSpaceSize());
     const size_t userWorkspaceSize = static_cast<size_t>(complex_gram_fused::UserWorkspaceBytes(n));
