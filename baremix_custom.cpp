@@ -131,12 +131,15 @@ public:
     __aicore__ inline void Process()
     {
         const uint32_t aicBlockIdx = GetBlockIdx();
+        if (aicBlockIdx >= tiling_.usedCoreNum) {
+            return;
+        }
         tile_ = CalcTileInfo(aicBlockIdx, tiling_);
         if (!tile_.valid) {
             return;
         }
 
-        REGIST_MATMUL_OBJ(pipe_, GetSysWorkSpacePtr(), mm_);
+        REGIST_MATMUL_OBJ(pipe_, GetSysWorkSpacePtr(), mm_, &tiling_);
         for (uint32_t g = 0; g < complex_gram_fused::GROUP_NUM; ++g) {
             for (uint32_t inner = 0; inner < complex_gram_fused::AVG_NUM; ++inner) {
                 const uint64_t slice = (static_cast<uint64_t>(g) * complex_gram_fused::AVG_NUM + inner) *
@@ -163,7 +166,7 @@ private:
         aGm.SetGlobalBuffer(aBase, params_.k * params_.u);
         bGm.SetGlobalBuffer(bBase, params_.k * params_.u);
 
-        mm_.Init(&tiling_);
+        mm_.SetOrgShape(tiling_.M, tiling_.N, tiling_.Ka, tiling_.Kb);
         mm_.SetTensorA(aGm[tile_.offsetA], true);
         mm_.SetTensorB(bGm[tile_.offsetB], false);
         mm_.SetTail(tile_.rowLen, tile_.colLen);
@@ -215,6 +218,9 @@ public:
     {
         const uint32_t aivBlockIdx = GetBlockIdx();
         const uint32_t aicBlockIdx = aivBlockIdx / complex_gram_fused::AIV_PER_AIC;
+        if (aicBlockIdx >= tiling_.usedCoreNum) {
+            return;
+        }
         tile_ = CalcTileInfo(aicBlockIdx, tiling_);
         if (!tile_.valid) {
             return;
