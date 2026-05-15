@@ -13,6 +13,7 @@ using namespace matmul_tiling;
 namespace complex_gram_fused {
 constexpr uint32_t K_DIM = 256;
 constexpr uint32_t USER_VEC = 8;
+constexpr uint32_t AVG_NUM = 16;
 constexpr uint32_t TMP_MATMUL_NUM = 4;
 
 struct Params {
@@ -43,7 +44,7 @@ uint64_t MatrixElems(uint32_t n)
 
 uint64_t UserWorkspaceBytes(uint32_t n)
 {
-    return TMP_MATMUL_NUM * MatrixElems(n) * sizeof(float);
+    return TMP_MATMUL_NUM * AVG_NUM * MatrixElems(n) * sizeof(float);
 }
 }  // namespace complex_gram_fused
 

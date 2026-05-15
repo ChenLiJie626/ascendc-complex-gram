@@ -29,7 +29,7 @@
 核函数名：`baremix_custom`
 
 ## 代码实现介绍
-`baremix_custom.cpp` 使用 `KERNEL_TYPE_MIX_AIC_1_2` 启用 AIC/AIV 混合核。AIC 侧调用 Matmul 高阶 API 做四个实矩阵乘：
+`baremix_custom.cpp` 使用 `KERNEL_TYPE_MIX_AIC_1_2` 启用 AIC/AIV 混合核。AIC 侧按 group 调用 Matmul 高阶 API，连续算完该 group 下 16 个 inner 的四个实矩阵乘：
 ```
 RR = Ar^T * Ar
 II = Ai^T * Ai
@@ -48,7 +48,7 @@ Bsum  += B / 17
 Csum  += B[::8, ::8] / 17
 ```
 
-AIV 完成当前切片后用同一个 `FLAG_VEC_DONE` 调用 `CrossCoreSetFlag<0x2, ...>` 通知 AIC。mode 2 会在两个 AIV sub block 都 set 该 flag 后放行 AIC，AIC 再复用临时 workspace。
+AIC 每个 group 只发送一次 ready flag。AIV 等 ready 后处理该 group 的 16 个 inner，完成后两个 AIV sub block 对同一个 done flag 调用 `CrossCoreSetFlag<0x2, ...>`；mode 2 会在两个 AIV 都 set 后放行 AIC，AIC 再复用临时 workspace。ready/done flag 按 group 奇偶交替使用，避免同一 flagId 高频设置。
 
 ## 运行样例算子
 ```bash

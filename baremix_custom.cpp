@@ -15,6 +15,7 @@ constexpr uint32_t AVG_NUM = 16;
 constexpr uint32_t K_DIM = 256;
 constexpr uint32_t USER_VEC = 8;
 constexpr uint32_t AIV_PER_AIC = 2;
+constexpr uint32_t TMP_MATMUL_NUM = 4;
 
 struct Params {
     uint32_t n;
@@ -29,8 +30,8 @@ struct Params {
 
 namespace {
 
-constexpr uint16_t FLAG_CUBE_DONE = 3;
-constexpr uint16_t FLAG_VEC_DONE = 4;
+constexpr uint16_t FLAG_CUBE_DONE_BASE = 7;
+constexpr uint16_t FLAG_VEC_DONE_BASE = 9;
 constexpr uint32_t VEC_CHUNK = 256;
 constexpr float INV_AVG_NUM = 1.0f / static_cast<float>(complex_gram_fused::AVG_NUM);
 constexpr float INV_GROUP_NUM = 1.0f / static_cast<float>(complex_gram_fused::GROUP_NUM);
@@ -120,11 +121,11 @@ public:
         pipe_ = pipe;
 
         auto userWorkspace = reinterpret_cast<__gm__ uint8_t *>(workspace) + params_.sysWorkspaceSize;
-        const uint64_t matrixElems = static_cast<uint64_t>(params_.u) * params_.u;
-        tmpRR_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(userWorkspace), matrixElems);
-        tmpII_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(userWorkspace) + matrixElems, matrixElems);
-        tmpRI_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(userWorkspace) + matrixElems * 2, matrixElems);
-        tmpIR_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(userWorkspace) + matrixElems * 3, matrixElems);
+        const uint64_t tmpMatrixElems = static_cast<uint64_t>(complex_gram_fused::AVG_NUM) * params_.u * params_.u;
+        tmpRR_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(userWorkspace), tmpMatrixElems);
+        tmpII_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(userWorkspace) + tmpMatrixElems, tmpMatrixElems);
+        tmpRI_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(userWorkspace) + tmpMatrixElems * 2, tmpMatrixElems);
+        tmpIR_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(userWorkspace) + tmpMatrixElems * 3, tmpMatrixElems);
     }
 
     __aicore__ inline void Process()
@@ -139,19 +140,22 @@ public:
             for (uint32_t inner = 0; inner < complex_gram_fused::AVG_NUM; ++inner) {
                 const uint64_t slice = (static_cast<uint64_t>(g) * complex_gram_fused::AVG_NUM + inner) *
                                        params_.k * params_.u;
-                RunMatmul(ar_ + slice, ar_ + slice, tmpRR_);
-                RunMatmul(ai_ + slice, ai_ + slice, tmpII_);
-                RunMatmul(ar_ + slice, ai_ + slice, tmpRI_);
-                RunMatmul(ai_ + slice, ar_ + slice, tmpIR_);
-
-                CrossCoreSetFlag<0x2, PIPE_FIX>(FLAG_CUBE_DONE);
-                CrossCoreWaitFlag(FLAG_VEC_DONE);
+                const uint64_t tmpBase = static_cast<uint64_t>(inner) * params_.u * params_.u;
+                RunMatmul(ar_ + slice, ar_ + slice, tmpRR_, tmpBase);
+                RunMatmul(ai_ + slice, ai_ + slice, tmpII_, tmpBase);
+                RunMatmul(ar_ + slice, ai_ + slice, tmpRI_, tmpBase);
+                RunMatmul(ai_ + slice, ar_ + slice, tmpIR_, tmpBase);
             }
+            const uint16_t readyFlag = FLAG_CUBE_DONE_BASE + (g & 1);
+            const uint16_t doneFlag = FLAG_VEC_DONE_BASE + (g & 1);
+            CrossCoreSetFlag<0x2, PIPE_FIX>(readyFlag);
+            CrossCoreWaitFlag(doneFlag);
         }
     }
 
 private:
-    __aicore__ inline void RunMatmul(__gm__ AType *aBase, __gm__ BType *bBase, GlobalTensor<float> &cGm)
+    __aicore__ inline void RunMatmul(__gm__ AType *aBase, __gm__ BType *bBase, GlobalTensor<float> &cGm,
+                                     uint64_t tmpBase)
     {
         GlobalTensor<AType> aGm;
         GlobalTensor<BType> bGm;
@@ -162,7 +166,7 @@ private:
         mm_.SetTensorA(aGm[tile_.offsetA], true);
         mm_.SetTensorB(bGm[tile_.offsetB], false);
         mm_.SetTail(tile_.rowLen, tile_.colLen);
-        mm_.IterateAll(cGm[tile_.offsetC]);
+        mm_.IterateAll(cGm[tmpBase + tile_.offsetC]);
         mm_.End();
     }
 
@@ -190,6 +194,7 @@ public:
         pipe_ = pipe;
 
         const uint64_t matrixElems = static_cast<uint64_t>(params_.u) * params_.u;
+        const uint64_t tmpMatrixElems = static_cast<uint64_t>(complex_gram_fused::AVG_NUM) * matrixElems;
         b_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(b), complex_gram_fused::GROUP_NUM * matrixElems);
         bPlur_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(bPlur), complex_gram_fused::GROUP_NUM * matrixElems);
         bPlui_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(bPlui), complex_gram_fused::GROUP_NUM * matrixElems);
@@ -197,10 +202,10 @@ public:
         csum_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(csum), static_cast<uint64_t>(params_.n) * params_.n);
 
         auto userWorkspace = reinterpret_cast<__gm__ uint8_t *>(workspace) + params_.sysWorkspaceSize;
-        tmpRR_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(userWorkspace), matrixElems);
-        tmpII_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(userWorkspace) + matrixElems, matrixElems);
-        tmpRI_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(userWorkspace) + matrixElems * 2, matrixElems);
-        tmpIR_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(userWorkspace) + matrixElems * 3, matrixElems);
+        tmpRR_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(userWorkspace), tmpMatrixElems);
+        tmpII_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(userWorkspace) + tmpMatrixElems, tmpMatrixElems);
+        tmpRI_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(userWorkspace) + tmpMatrixElems * 2, tmpMatrixElems);
+        tmpIR_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(userWorkspace) + tmpMatrixElems * 3, tmpMatrixElems);
 
         pipe_->InitBuffer(calcBuf_, 8 * VEC_CHUNK * sizeof(float));
     }
@@ -218,11 +223,13 @@ public:
         rowEnd_ = MinU32(tile_.rowStart + tile_.rowLen, rowBegin_ + rowsPerSub);
 
         for (uint32_t g = 0; g < complex_gram_fused::GROUP_NUM; ++g) {
+            const uint16_t readyFlag = FLAG_CUBE_DONE_BASE + (g & 1);
+            const uint16_t doneFlag = FLAG_VEC_DONE_BASE + (g & 1);
+            CrossCoreWaitFlag(readyFlag);
             for (uint32_t inner = 0; inner < complex_gram_fused::AVG_NUM; ++inner) {
-                CrossCoreWaitFlag(FLAG_CUBE_DONE);
                 ProcessSlice(g, inner);
-                CrossCoreSetFlag<0x2, PIPE_MTE3>(FLAG_VEC_DONE);
             }
+            CrossCoreSetFlag<0x2, PIPE_MTE3>(doneFlag);
         }
     }
 
@@ -230,6 +237,7 @@ private:
     __aicore__ inline void ProcessSlice(uint32_t g, uint32_t inner)
     {
         const uint64_t matrixElems = static_cast<uint64_t>(params_.u) * params_.u;
+        const uint64_t tmpBase = static_cast<uint64_t>(inner) * matrixElems;
         const uint64_t groupBase = static_cast<uint64_t>(g) * matrixElems;
         LocalTensor<float> rr = calcBuf_.GetWithOffset<float>(VEC_CHUNK, 0);
         LocalTensor<float> ii = calcBuf_.GetWithOffset<float>(VEC_CHUNK, VEC_CHUNK * sizeof(float));
@@ -248,10 +256,10 @@ private:
                 const uint64_t offset = static_cast<uint64_t>(row) * params_.u + col;
                 const uint64_t outOffset = groupBase + offset;
 
-                DataCopy(rr, tmpRR_[offset], count);
-                DataCopy(ii, tmpII_[offset], count);
-                DataCopy(ri, tmpRI_[offset], count);
-                DataCopy(ir, tmpIR_[offset], count);
+                DataCopy(rr, tmpRR_[tmpBase + offset], count);
+                DataCopy(ii, tmpII_[tmpBase + offset], count);
+                DataCopy(ri, tmpRI_[tmpBase + offset], count);
+                DataCopy(ir, tmpIR_[tmpBase + offset], count);
                 if (inner != 0) {
                     DataCopy(bLocal, b_[outOffset], count);
                     DataCopy(prLocal, bPlur_[outOffset], count);
