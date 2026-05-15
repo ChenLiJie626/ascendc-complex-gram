@@ -83,8 +83,8 @@ void GenerateTiling(const char *socVersion, uint32_t n, uint8_t *tilingBuf, size
     optiling::TCubeTiling tilingData;
     MultiCoreMatmulTiling tilingApi(*ascendcPlatform);
     tilingApi.SetDim(blockDim);
-    tilingApi.SetAType(TPosition::GM, CubeFormat::ND, DataType::DT_FLOAT16, true);
-    tilingApi.SetBType(TPosition::GM, CubeFormat::ND, DataType::DT_FLOAT16, false);
+    tilingApi.SetAType(TPosition::GM, CubeFormat::ND, DataType::DT_FLOAT, true);
+    tilingApi.SetBType(TPosition::GM, CubeFormat::ND, DataType::DT_FLOAT, false);
     tilingApi.SetCType(TPosition::GM, CubeFormat::ND, DataType::DT_FLOAT);
     tilingApi.SetOrgShape(u, u, complex_gram_fused::K_DIM);
     tilingApi.SetShape(u, u, complex_gram_fused::K_DIM);

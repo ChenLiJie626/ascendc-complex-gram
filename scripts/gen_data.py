@@ -18,8 +18,8 @@ def generate(n: int, seed: int) -> None:
 
     rng = np.random.default_rng(seed)
     u = n * USER_VEC
-    ar = rng.uniform(-0.2, 0.2, size=(GROUP_NUM, AVG_NUM, K_DIM, u)).astype(np.float16)
-    ai = rng.uniform(-0.2, 0.2, size=(GROUP_NUM, AVG_NUM, K_DIM, u)).astype(np.float16)
+    ar = rng.uniform(-0.2, 0.2, size=(GROUP_NUM, AVG_NUM, K_DIM, u)).astype(np.float32)
+    ai = rng.uniform(-0.2, 0.2, size=(GROUP_NUM, AVG_NUM, K_DIM, u)).astype(np.float32)
 
     b = np.zeros((GROUP_NUM, u, u), dtype=np.float32)
     bplur = np.zeros((GROUP_NUM, u, u), dtype=np.float32)
@@ -33,8 +33,8 @@ def generate(n: int, seed: int) -> None:
         prg = np.zeros((u, u), dtype=np.float32)
         pig = np.zeros((u, u), dtype=np.float32)
         for inner in range(AVG_NUM):
-            ar_slice = ar[g, inner].astype(np.float32)
-            ai_slice = ai[g, inner].astype(np.float32)
+            ar_slice = ar[g, inner]
+            ai_slice = ai[g, inner]
             rr = ar_slice.T @ ar_slice
             ii = ai_slice.T @ ai_slice
             ri = ar_slice.T @ ai_slice

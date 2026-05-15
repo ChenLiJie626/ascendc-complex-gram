@@ -55,7 +55,7 @@ int32_t main(int32_t argc, char *argv[])
     }
 
     const uint32_t u = n * USER_VEC;
-    const size_t aFileSize = static_cast<size_t>(GROUP_NUM) * AVG_NUM * K_DIM * u * sizeof(uint16_t);
+    const size_t aFileSize = static_cast<size_t>(GROUP_NUM) * AVG_NUM * K_DIM * u * sizeof(float);
     const size_t matrixFileSize = static_cast<size_t>(u) * u * sizeof(float);
     const size_t bFileSize = static_cast<size_t>(GROUP_NUM) * u * u * sizeof(float);
     const size_t csumFileSize = static_cast<size_t>(n) * n * sizeof(float);

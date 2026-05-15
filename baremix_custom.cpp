@@ -36,8 +36,8 @@ constexpr uint32_t VEC_CHUNK = 256;
 constexpr float INV_AVG_NUM = 1.0f / static_cast<float>(complex_gram_fused::AVG_NUM);
 constexpr float INV_GROUP_NUM = 1.0f / static_cast<float>(complex_gram_fused::GROUP_NUM);
 
-using AType = half;
-using BType = half;
+using AType = float;
+using BType = float;
 using CType = float;
 using BiasType = float;
 using Mm = Matmul<MatmulType<TPosition::GM, CubeFormat::ND, AType, true>,
