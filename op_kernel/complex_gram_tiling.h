@@ -1,46 +1,74 @@
-#pragma once
+/**
+ * @file complex_gram_tiling.h
+ * Official msOpGen-style tiling data definition for ComplexGram.
+ */
+#ifndef COMPLEX_GRAM_TILING_H
+#define COMPLEX_GRAM_TILING_H
 
 #include <cstdint>
 
-// Host/kernel shared tiling contract for ComplexGram.
-// Keep this struct POD and 32-byte aligned when wiring it to official CANN tiling data.
+#ifdef COMPLEX_GRAM_HOST_STANDALONE
 struct ComplexGramTilingData {
-    int32_t n;
-    int32_t k;                 // 8*n
-    int32_t groupNum;          // 17
-    int32_t slicesPerGroup;    // 16
-    int32_t mDim;              // 256
-
-    int32_t cubeBlockNum;      // 20
-    int32_t vectorBlockNum;    // 40
-    int32_t blockPerCube;      // vectorBlockNum / cubeBlockNum = 2
-
-    int32_t bm;                // output row tile, default 32
-    int32_t bn;                // output col tile, default 32
-    int32_t tileMNum;          // ceil(k / bm)
-    int32_t tileNNum;          // ceil(k / bn)
-    int32_t taskNum;           // groupNum * tileMNum * tileNNum
-
-    int32_t tileElem;          // bm * bn
-    int32_t vectorTile0;       // first half element count for lane 0
-    int32_t vectorTile1;       // second half element count for lane 1
-
-    uint64_t oneTaskTmpElems;  // 4 * slicesPerGroup * bm * bn
-    uint64_t workspaceBytes;   // taskNum * oneTaskTmpElems * sizeof(float), multi-kernel mode
-
-    int32_t pingPong;          // 2, single-kernel AIC/AIV ring buffer depth
-    int32_t flagSlotsPerBuf;   // ready0, ready1, done0, done1
-    uint64_t onePairTmpElems;  // pingPong * oneTaskTmpElems
-    uint64_t singleKernelWorkspaceBytes; // cubeBlockNum * onePairTmpElems * sizeof(float)
+    uint32_t n;
+    uint32_t k;
+    uint32_t groupNum;
+    uint32_t slicesPerGroup;
+    uint32_t mDim;
+    uint32_t cubeBlockNum;
+    uint32_t vectorBlockNum;
+    uint32_t blockPerCube;
+    uint32_t bm;
+    uint32_t bn;
+    uint32_t tileMNum;
+    uint32_t tileNNum;
+    uint32_t taskNum;
+    uint32_t tileElem;
+    uint32_t vectorTile0;
+    uint32_t vectorTile1;
+    uint32_t pingPong;
+    uint32_t flagSlotsPerBuf;
+    uint64_t oneTaskTmpElems;
+    uint64_t fullWorkspaceBytes;
+    uint64_t singleKernelWorkspaceBytes;
 };
+#else
+#include "register/tilingdata_base.h"
+namespace optiling {
+BEGIN_TILING_DATA_DEF(ComplexGramTilingData)
+    TILING_DATA_FIELD_DEF(uint32_t, n);
+    TILING_DATA_FIELD_DEF(uint32_t, k);
+    TILING_DATA_FIELD_DEF(uint32_t, groupNum);
+    TILING_DATA_FIELD_DEF(uint32_t, slicesPerGroup);
+    TILING_DATA_FIELD_DEF(uint32_t, mDim);
+    TILING_DATA_FIELD_DEF(uint32_t, cubeBlockNum);
+    TILING_DATA_FIELD_DEF(uint32_t, vectorBlockNum);
+    TILING_DATA_FIELD_DEF(uint32_t, blockPerCube);
+    TILING_DATA_FIELD_DEF(uint32_t, bm);
+    TILING_DATA_FIELD_DEF(uint32_t, bn);
+    TILING_DATA_FIELD_DEF(uint32_t, tileMNum);
+    TILING_DATA_FIELD_DEF(uint32_t, tileNNum);
+    TILING_DATA_FIELD_DEF(uint32_t, taskNum);
+    TILING_DATA_FIELD_DEF(uint32_t, tileElem);
+    TILING_DATA_FIELD_DEF(uint32_t, vectorTile0);
+    TILING_DATA_FIELD_DEF(uint32_t, vectorTile1);
+    TILING_DATA_FIELD_DEF(uint32_t, pingPong);
+    TILING_DATA_FIELD_DEF(uint32_t, flagSlotsPerBuf);
+    TILING_DATA_FIELD_DEF(uint64_t, oneTaskTmpElems);
+    TILING_DATA_FIELD_DEF(uint64_t, fullWorkspaceBytes);
+    TILING_DATA_FIELD_DEF(uint64_t, singleKernelWorkspaceBytes);
+END_TILING_DATA_DEF;
+REGISTER_TILING_DATA_CLASS(ComplexGram, ComplexGramTilingData)
+} // namespace optiling
+#endif
 
-static inline ComplexGramTilingData MakeComplexGramTiling(int32_t n,
-                                                          int32_t bm = 32,
-                                                          int32_t bn = 32,
-                                                          int32_t cubeBlockNum = 20,
-                                                          int32_t vectorBlockNum = 40)
+static inline ComplexGramTilingData MakeComplexGramTilingData(uint32_t n,
+                                                              uint32_t bm = 32,
+                                                              uint32_t bn = 32,
+                                                              uint32_t cubeBlockNum = 20,
+                                                              uint32_t vectorBlockNum = 40)
 {
     ComplexGramTilingData t{};
+#ifdef COMPLEX_GRAM_HOST_STANDALONE
     t.n = n;
     t.k = n * 8;
     t.groupNum = 17;
@@ -57,11 +85,41 @@ static inline ComplexGramTilingData MakeComplexGramTiling(int32_t n,
     t.tileElem = bm * bn;
     t.vectorTile0 = (t.tileElem + 1) / 2;
     t.vectorTile1 = t.tileElem - t.vectorTile0;
-    t.oneTaskTmpElems = static_cast<uint64_t>(4) * t.slicesPerGroup * bm * bn;
-    t.workspaceBytes = static_cast<uint64_t>(t.taskNum) * t.oneTaskTmpElems * sizeof(float);
     t.pingPong = 2;
     t.flagSlotsPerBuf = 4;
-    t.onePairTmpElems = static_cast<uint64_t>(t.pingPong) * t.oneTaskTmpElems;
-    t.singleKernelWorkspaceBytes = static_cast<uint64_t>(t.cubeBlockNum) * t.onePairTmpElems * sizeof(float);
+    t.oneTaskTmpElems = static_cast<uint64_t>(4) * t.slicesPerGroup * bm * bn;
+    t.fullWorkspaceBytes = static_cast<uint64_t>(t.taskNum) * t.oneTaskTmpElems * sizeof(float);
+    t.singleKernelWorkspaceBytes = static_cast<uint64_t>(t.cubeBlockNum) * t.pingPong * t.oneTaskTmpElems * sizeof(float);
+#else
+    t.set_n(n);
+    t.set_k(n * 8);
+    t.set_groupNum(17);
+    t.set_slicesPerGroup(16);
+    t.set_mDim(256);
+    t.set_cubeBlockNum(cubeBlockNum);
+    t.set_vectorBlockNum(vectorBlockNum);
+    t.set_blockPerCube(vectorBlockNum / cubeBlockNum);
+    t.set_bm(bm);
+    t.set_bn(bn);
+    const uint32_t k = n * 8;
+    const uint32_t tileMNum = (k + bm - 1) / bm;
+    const uint32_t tileNNum = (k + bn - 1) / bn;
+    const uint32_t taskNum = 17 * tileMNum * tileNNum;
+    const uint32_t tileElem = bm * bn;
+    const uint64_t oneTaskTmpElems = static_cast<uint64_t>(4) * 16 * bm * bn;
+    t.set_tileMNum(tileMNum);
+    t.set_tileNNum(tileNNum);
+    t.set_taskNum(taskNum);
+    t.set_tileElem(tileElem);
+    t.set_vectorTile0((tileElem + 1) / 2);
+    t.set_vectorTile1(tileElem - ((tileElem + 1) / 2));
+    t.set_pingPong(2);
+    t.set_flagSlotsPerBuf(4);
+    t.set_oneTaskTmpElems(oneTaskTmpElems);
+    t.set_fullWorkspaceBytes(static_cast<uint64_t>(taskNum) * oneTaskTmpElems * sizeof(float));
+    t.set_singleKernelWorkspaceBytes(static_cast<uint64_t>(cubeBlockNum) * 2 * oneTaskTmpElems * sizeof(float));
+#endif
     return t;
 }
+
+#endif // COMPLEX_GRAM_TILING_H

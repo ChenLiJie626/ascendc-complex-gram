@@ -1,26 +1,29 @@
 #!/usr/bin/env bash
 set -euo pipefail
-cd "$(dirname "$0")"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "${SCRIPT_DIR}"
 
-: "${ASCEND_HOME:=/usr/local/Ascend/ascend-toolkit/latest}"
-if [ ! -d "${ASCEND_HOME}" ]; then
-  echo "ASCEND_HOME not found: ${ASCEND_HOME}" >&2
-  echo "This is an msOpGen-style skeleton. On an Ascend machine set:" >&2
-  echo "  export ASCEND_HOME=/usr/local/Ascend/ascend-toolkit/latest" >&2
+resolve_install_path() {
+    if [[ -n "${ASCEND_HOME_PATH:-}" ]]; then echo "${ASCEND_HOME_PATH}";
+    elif [[ -n "${ASCEND_HOME:-}" ]]; then echo "${ASCEND_HOME}";
+    elif [[ -d "${HOME}/Ascend/ascend-toolkit/latest" ]]; then echo "${HOME}/Ascend/ascend-toolkit/latest";
+    else echo "/usr/local/Ascend/ascend-toolkit/latest"; fi
+}
+export ASCEND_HOME_PATH="$(resolve_install_path)"
+if [[ -f "${ASCEND_HOME_PATH}/bin/setenv.bash" ]]; then
+  source "${ASCEND_HOME_PATH}/bin/setenv.bash"
+elif [[ -f "${ASCEND_HOME_PATH}/set_env.sh" ]]; then
+  source "${ASCEND_HOME_PATH}/set_env.sh"
+else
+  echo "ERROR: cannot find Ascend environment under ${ASCEND_HOME_PATH}" >&2
   exit 1
 fi
-source "${ASCEND_HOME}/set_env.sh"
 
-cat <<'MSG'
-This repository has been reorganized as an msOpGen-style source skeleton.
-To produce an installable custom-op package, create/generate the real msOpGen
-project for op ComplexGram, then merge this repository's op_proto/op_host/op_kernel
-files into the generated project and use that generated build system.
-
-Next files to wire in the generated project:
-  op_proto/complex_gram.cpp
-  op_host/complex_gram_tiling.cpp
-  op_kernel/complex_gram_single_kernel.cpp
-  op_kernel/complex_gram_reduce_kernel.cpp
-  op_kernel/complex_gram_tiling.h
-MSG
+if command -v msopgen >/dev/null 2>&1; then
+  echo "Using msopgen compile entry."
+  msopgen compile -i "${SCRIPT_DIR}" -c "${ASCEND_HOME_PATH}"
+else
+  echo "msopgen command not found; falling back to generated CMake preset if available."
+  cmake --preset default
+  cmake --build --preset default
+fi

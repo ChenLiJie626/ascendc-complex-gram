@@ -1,0 +1,16 @@
+[
+  {
+    "op": "ComplexGram",
+    "input_desc": [
+      {"name": "ar", "param_type": "required", "format": ["ND"], "type": ["fp16"]},
+      {"name": "ai", "param_type": "required", "format": ["ND"], "type": ["fp16"]}
+    ],
+    "output_desc": [
+      {"name": "b", "param_type": "required", "format": ["ND"], "type": ["fp32"]},
+      {"name": "bplur", "param_type": "required", "format": ["ND"], "type": ["fp32"]},
+      {"name": "bplui", "param_type": "required", "format": ["ND"], "type": ["fp32"]},
+      {"name": "bsum", "param_type": "required", "format": ["ND"], "type": ["fp32"]},
+      {"name": "csum", "param_type": "required", "format": ["ND"], "type": ["fp32"]}
+    ]
+  }
+]
