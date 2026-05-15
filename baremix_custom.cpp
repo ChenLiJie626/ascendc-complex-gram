@@ -130,7 +130,8 @@ public:
 
     __aicore__ inline void Process()
     {
-        tile_ = CalcTileInfo(GetBlockIdx(), tiling_);
+        const uint32_t aicBlockIdx = GetBlockIdx();
+        tile_ = CalcTileInfo(aicBlockIdx, tiling_);
         if (!tile_.valid) {
             return;
         }
@@ -212,12 +213,14 @@ public:
 
     __aicore__ inline void Process()
     {
-        tile_ = CalcTileInfo(GetBlockIdx(), tiling_);
+        const uint32_t aivBlockIdx = GetBlockIdx();
+        const uint32_t aicBlockIdx = aivBlockIdx / complex_gram_fused::AIV_PER_AIC;
+        tile_ = CalcTileInfo(aicBlockIdx, tiling_);
         if (!tile_.valid) {
             return;
         }
 
-        const uint32_t subIdx = GetSubBlockIdx() % complex_gram_fused::AIV_PER_AIC;
+        const uint32_t subIdx = aivBlockIdx % complex_gram_fused::AIV_PER_AIC;
         const uint32_t rowsPerSub = CeilDiv(tile_.rowLen, complex_gram_fused::AIV_PER_AIC);
         rowBegin_ = tile_.rowStart + subIdx * rowsPerSub;
         rowEnd_ = MinU32(tile_.rowStart + tile_.rowLen, rowBegin_ + rowsPerSub);
