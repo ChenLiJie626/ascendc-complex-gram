@@ -59,6 +59,10 @@ BEGIN_TILING_DATA_DEF(ComplexGramTilingData)
 END_TILING_DATA_DEF;
 REGISTER_TILING_DATA_CLASS(ComplexGram, ComplexGramTilingData)
 } // namespace optiling
+// msOpGen defines the tiling class inside namespace optiling. The helper below is
+// intentionally global because op_host/complex_gram.cpp calls it from optiling::TilingFunc
+// and local standalone tools call it from global scope. Export the type name here.
+using optiling::ComplexGramTilingData;
 #endif
 
 static inline ComplexGramTilingData MakeComplexGramTilingData(uint32_t n,
