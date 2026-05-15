@@ -99,8 +99,6 @@ void GenerateTiling(const char *socVersion, uint32_t n, uint8_t *tilingBuf, size
         std::cout << "gen tiling failed" << std::endl;
         return;
     }
-    blockDim = tilingData.usedCoreNum;
-
     const size_t systemWorkspaceSize = static_cast<size_t>(ascendcPlatform->GetLibApiWorkSpaceSize());
     const size_t userWorkspaceSize = static_cast<size_t>(complex_gram_fused::UserWorkspaceBytes(n));
     workspaceSize = systemWorkspaceSize + userWorkspaceSize;

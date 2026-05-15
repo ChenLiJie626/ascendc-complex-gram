@@ -131,7 +131,7 @@ public:
     __aicore__ inline void Process()
     {
         const uint32_t aicBlockIdx = GetBlockIdx();
-        if (aicBlockIdx >= tiling_.usedCoreNum) {
+        if (aicBlockIdx >= params_.blockDim) {
             return;
         }
         tile_ = CalcTileInfo(aicBlockIdx, tiling_);
@@ -218,7 +218,7 @@ public:
     {
         const uint32_t aivBlockIdx = GetBlockIdx();
         const uint32_t aicBlockIdx = aivBlockIdx / complex_gram_fused::AIV_PER_AIC;
-        if (aicBlockIdx >= tiling_.usedCoreNum) {
+        if (aicBlockIdx >= params_.blockDim) {
             return;
         }
         tile_ = CalcTileInfo(aicBlockIdx, tiling_);
