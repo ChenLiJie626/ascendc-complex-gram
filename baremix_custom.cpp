@@ -29,8 +29,8 @@ struct Params {
 
 namespace {
 
-constexpr uint16_t FLAG_CUBE_DONE = 8;
-constexpr uint16_t FLAG_VEC_DONE_BASE = 9;
+constexpr uint16_t FLAG_CUBE_DONE = 3;
+constexpr uint16_t FLAG_VEC_DONE = 4;
 constexpr uint32_t VEC_CHUNK = 256;
 constexpr float INV_AVG_NUM = 1.0f / static_cast<float>(complex_gram_fused::AVG_NUM);
 constexpr float INV_GROUP_NUM = 1.0f / static_cast<float>(complex_gram_fused::GROUP_NUM);
@@ -145,8 +145,7 @@ public:
                 RunMatmul(ai_ + slice, ar_ + slice, tmpIR_);
 
                 CrossCoreSetFlag<0x2, PIPE_FIX>(FLAG_CUBE_DONE);
-                CrossCoreWaitFlag(FLAG_VEC_DONE_BASE);
-                CrossCoreWaitFlag(FLAG_VEC_DONE_BASE + 1);
+                CrossCoreWaitFlag(FLAG_VEC_DONE);
             }
         }
     }
@@ -217,13 +216,12 @@ public:
         const uint32_t rowsPerSub = CeilDiv(tile_.rowLen, complex_gram_fused::AIV_PER_AIC);
         rowBegin_ = tile_.rowStart + subIdx * rowsPerSub;
         rowEnd_ = MinU32(tile_.rowStart + tile_.rowLen, rowBegin_ + rowsPerSub);
-        doneFlag_ = FLAG_VEC_DONE_BASE + subIdx;
 
         for (uint32_t g = 0; g < complex_gram_fused::GROUP_NUM; ++g) {
             for (uint32_t inner = 0; inner < complex_gram_fused::AVG_NUM; ++inner) {
                 CrossCoreWaitFlag(FLAG_CUBE_DONE);
                 ProcessSlice(g, inner);
-                CrossCoreSetFlag<0x2, PIPE_MTE3>(doneFlag_);
+                CrossCoreSetFlag<0x2, PIPE_MTE3>(FLAG_VEC_DONE);
             }
         }
     }
@@ -355,7 +353,6 @@ private:
     TileInfo tile_;
     uint32_t rowBegin_;
     uint32_t rowEnd_;
-    uint32_t doneFlag_;
     TPipe *pipe_;
     TBuf<TPosition::VECCALC> calcBuf_;
     GlobalTensor<float> tmpRR_;

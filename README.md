@@ -48,7 +48,7 @@ Bsum  += B / 17
 Csum  += B[::8, ::8] / 17
 ```
 
-AIV 完成当前切片后用 `CrossCoreSetFlag` 通知 AIC，AIC 等两个 AIV sub block 都完成后才复用临时 workspace。
+AIV 完成当前切片后用同一个 `FLAG_VEC_DONE` 调用 `CrossCoreSetFlag<0x2, ...>` 通知 AIC。mode 2 会在两个 AIV sub block 都 set 该 flag 后放行 AIC，AIC 再复用临时 workspace。
 
 ## 运行样例算子
 ```bash
